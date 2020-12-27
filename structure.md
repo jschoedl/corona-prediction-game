@@ -1,0 +1,17 @@
+menu
+- New Prediction(select_country)
+    - give_prediction
+    - confirm_prediction
+    - link_account
+        - _confirm_prediction_
+        - _link_account_
+    - do_link
+        - custom_nickname
+            - _custom_nickname_
+- My Predictions(user_predictions)
+    - country_details
+- Preferences(preferences)
+    - change_preferences
+        - _do_link_
+- High Scores(high_scores)
+- About(about)
