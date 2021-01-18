@@ -8,6 +8,7 @@ Users of this bot can predict the Covid-19 statistics by drawing a graph into a 
 This bot is using a dataset maintained by 'Our World in Data'. You can find it [here](https://github.com/owid/covid-19-data/tree/master/public/data). The original data is provided by the European Centre for Disease Prevention and Control (EDCD). For more information on their copyright policy, check out [this link](https://www.ecdc.europa.eu/en/copyright).
 
 ## Running locally
+Due to the use of the library ```multiprocessing``` errors might occur when running on Windows. I did not test it though.
 1. Install the dependencies: ```pip install -r requirements.txt```
 2. Create a new Telegram bot using [@BotFather](https://t.me/BotFather)
 3. Insert the bot token at internals.py
