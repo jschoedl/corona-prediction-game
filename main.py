@@ -1,14 +1,15 @@
-import _pickle
 import datetime
 import logging
+import multiprocessing
 import os
-import pickle
 import random
+import time
 import warnings
 from copy import copy
 from signal import signal, SIGTERM, SIGINT
 from threading import Semaphore
 
+import compress_pickle
 import requests
 from matplotlib.dates import num2date
 from telegram import ReplyKeyboardMarkup, ReplyKeyboardRemove, ChatAction
@@ -17,11 +18,10 @@ from telegram.ext import CommandHandler, MessageHandler, Filters, ConversationHa
 
 import charts
 import eastereggs
-import images
 import internal
-import predictions
-from data import Data, UPDATE_HOUR
-from scores import refresh_scores
+import line_detection
+from data import Data
+from scores import get_score, get_daily
 
 
 def async_(fun):
@@ -29,8 +29,8 @@ def async_(fun):
     # return lambda *args, **kwargs: dispatcher.run_async(fun, *args, **kwargs)
 
 
-def load_database(base_params: dict):
-    if not TEST:
+def load_database(base: dict):
+    if not test_environment:
         params = {
             'api_dev_key': internal.API_DEV_KEY,
             'api_option': "list",
@@ -48,18 +48,14 @@ def load_database(base_params: dict):
             'api_paste_key': paste_key,
         }
         res = requests.post(f"https://pastebin.com/api/api_raw.php", data=params)
-        with open("database.pickle", "wb") as f:
+        with open(internal.DATABASE_PATH, "wb") as f:
             f.write(res.content)
 
-    if not TEST or TEST and os.path.exists(internal.DATABASE_PATH):
-        try:
-            with open(internal.DATABASE_PATH, "rb") as f:
-                _database = pickle.load(f)
-        except (EOFError, _pickle.UnpicklingError):
-            logging.critical("Invalid database!")
-            return base_params
+    if not test_environment or test_environment and os.path.exists(internal.DATABASE_PATH):
+        _database = compress_pickle.load(internal.DATABASE_PATH)
+        _database = multiprocessing.Manager().dict(_database)
         logging.info(f"Loaded database from {internal.DATABASE_PATH}.")
-        for param, value in base_params.items():
+        for param, value in base.items():
             if param not in _database:
                 _database[param] = value
                 logging.info(
@@ -68,14 +64,13 @@ def load_database(base_params: dict):
 
     else:
         logging.info(f"No backup found.")
-        return base_params
+        return base
 
 
 def backup_database(*args):
-    with open(internal.DATABASE_PATH, "wb") as f:
-        pickle.dump(database, f)
+    compress_pickle.dump(dict(database), internal.DATABASE_PATH)
 
-    if not TEST:
+    if not test_environment:
         with open(internal.DATABASE_PATH, "rb") as f:
             updater.bot.send_document(
                 chat_id=internal.ADMIN_USER,
@@ -127,7 +122,7 @@ def get_flag(country):
     return "  "
 
 
-def send_menu_markup(text, update, chat_id=None):
+def send_menu_markup(text: str, update, chat_id=None):
     markup = []
     for i in range(0, len(titles := list(MENU_OPTIONS.keys())) * 2, 2):
         markup.append(titles[i:i + 2])
@@ -188,7 +183,7 @@ def log(fun):
 
 
 @log
-def start(update, context):
+def start(update, _):
     send_menu_markup("Welcome to the Corona Prediction Game!", update)
 
     global database
@@ -222,7 +217,7 @@ def menu(update, context):
     return MENU_OPTIONS[update.message.text](update, context)
 
 
-def select_country(update, context):
+def select_country(update, _):
     markup = [[SUPPORTED_COUNTRIES[0]]]
     for i in range(0, len(SUPPORTED_COUNTRIES[1:]) * 3, 3):
         markup.append(SUPPORTED_COUNTRIES[i + 1:i + 4])
@@ -237,7 +232,7 @@ def select_country(update, context):
 
 @log
 @async_
-def give_prediction(update, context):
+def give_prediction(update, _):
     if update.message.text not in SUPPORTED_COUNTRIES:
         markup = [[SUPPORTED_COUNTRIES[0]]]
         for i in range(0, len(SUPPORTED_COUNTRIES[1:]) * 3, 3):
@@ -265,7 +260,7 @@ def give_prediction(update, context):
             database['users'][user_id]['drawing_area'] and
             database['users'][user_id]['drawing_update'] == datetime.date.today()
     )
-    res = images.load(country, covid_stats, force=force)
+    res = charts.visualize_for_input(country, covid_stats, force=force)
     if res:
         database['users'][user_id]['drawing_area'] = res
         database['users'][user_id]['drawing_update'] = datetime.date.today()
@@ -276,13 +271,14 @@ def give_prediction(update, context):
     else:
         warning = ""
 
-    with open(f"{images.IMAGES_PATH}/{country}.jpg", "rb") as f:
+    with open(f"{charts.IMAGES_PATH}/{country}.jpg", "rb") as f:
         update.message.reply_photo(
             photo=f,
             caption=f"📈Alright, here are the daily new cases of Covid-19 "
                     f"{'for the whole' if country == 'World' else 'in'} {country}. How will the pandemic continue?\n\n"
                     "Download the image and draw your estimate with the Telegram app or a software of your choice. Then"
-                    " upload the edited image in this chat. Your drawn line will be detected automatically!" + warning,
+                    " upload the edited image in this chat. Your drawn line will be detected automatically!"
+                    "\n\n Use /start to go back." + warning,
             reply_markup=ReplyKeyboardRemove()
         )
     return CONFIRM_PREDICTION
@@ -290,7 +286,7 @@ def give_prediction(update, context):
 
 @log
 @async_
-def confirm_prediction(update, context):
+def confirm_prediction(update, _):
     global database
     user_id = update.message.from_user.id
     # noinspection PyTypeChecker
@@ -301,28 +297,30 @@ def confirm_prediction(update, context):
     file = update.message.photo[-1].get_file()
 
     temp_lock.acquire()
-    file.download(custom_path=internal.TEMP_PATH)
-    raw_predictions = predictions.evaluate(internal.TEMP_PATH, country, drawing_area, covid_stats)
-    if type(raw_predictions) == str:
-        update.message.reply_text(raw_predictions)
-        return CONFIRM_PREDICTION
-    database['users'][user_id]['recent_prediction'] = raw_predictions
-    charts.visualize(country, raw_predictions, internal.TEMP_PATH, covid_stats)
-    with open(internal.TEMP_PATH, "rb") as f:
-        update.message.reply_photo(
-            photo=f,
-            caption="This is how your line is detected. Is everything okay here?",
-            reply_markup=ReplyKeyboardMarkup(
-                [["✅ Seems right, continue"], ["⏪ No, go back"]],
-                one_time_keyboard=True
+    try:
+        file.download(custom_path=internal.TEMP_PATH)
+        raw_predictions = line_detection.evaluate(internal.TEMP_PATH, country, drawing_area, covid_stats)
+        if type(raw_predictions) == str:
+            update.message.reply_text(raw_predictions)
+            return CONFIRM_PREDICTION
+        database['users'][user_id]['recent_prediction'] = raw_predictions
+        charts.visualize_for_confirmation(country, raw_predictions, internal.TEMP_PATH, covid_stats)
+        with open(internal.TEMP_PATH, "rb") as f:
+            update.message.reply_photo(
+                photo=f,
+                caption="This is how your line is detected. Is everything okay here?",
+                reply_markup=ReplyKeyboardMarkup(
+                    [["✅ Seems right, continue"], ["⏪ No, go back"]],
+                    one_time_keyboard=True
+                )
             )
-        )
-    temp_lock.release()
+    finally:
+        temp_lock.release()
     return LINK_ACCOUNT
 
 
 @log
-def link_account(update, context):
+def link_account(update, _):
     global database
     user_id = update.message.from_user.id
 
@@ -391,7 +389,7 @@ def do_link(update, context):
 
 
 @log
-def custom_nickname(update, context):
+def custom_nickname(update, _):
     if len(new_nickname := update.message.text) > 30:
         update.message.reply_text(
             text="This nickname is pretty long - Please keep it below 30 characters. And again: What shall be your "
@@ -409,7 +407,7 @@ def custom_nickname(update, context):
     return MENU
 
 
-def preferences(update, context):
+def preferences(update, _):
     user = database['users'][update.message.from_user.id]
     interval = user['scheduled_updates_interval']
     scheduled_updates_text = {
@@ -471,8 +469,6 @@ def change_preferences(update, context):
 
 
 def high_scores(update, context):
-    refresh_scores(database, covid_stats, update, force=DEBUG_SCORES)
-    send_pending_messages(database['users'])
     if "back" in update.message.text.lower():
         return start(update, context)
 
@@ -500,10 +496,6 @@ def high_scores(update, context):
     formatted_highscores = []
     user_id = update.message.from_user.id
     for i, (score, user, country) in enumerate(highscores):
-        if daily:
-            response = "Average Daily Score\n\n"
-        else:
-            response = "Total Scores\n\n"
         if user == database['users'][user_id]:
             formatted_highscores.append(
                 f"#{i + 1} {get_flag(country)} {score:.3f}: {user['nickname']} <-- you")
@@ -511,6 +503,10 @@ def high_scores(update, context):
             formatted_highscores.append(
                 f"#{i + 1} {get_flag(country)} {score:.3f}: {user['nickname']}")
 
+    if daily:
+        response = "Average Daily Score\n\n"
+    else:
+        response = "Total Scores\n\n"
     response += "\n".join(formatted_highscores[:10] + [""] + formatted_highscores[10:])
     response += f"\n\ntotal predictions: {len(highscores)}"
 
@@ -525,24 +521,22 @@ def high_scores(update, context):
     return HIGH_SCORES
 
 
-def about(update, context):
-    send_menu_markup("This is version 1.4.12. \nChangelog: @cpgame_changelog\n\n"
+def about(update, _):
+    send_menu_markup("This is version 1.5.0. \nChangelog: @cpgame_changelog\nGitHub: "
+                     "https://github.com/jschoedl/corona-prediction-game\n\n"
                      "This bot is using a dataset maintained by 'Our World in Data'. You can find it "
                      "here: https://github.com/owid/covid-19-data/tree/master/public/data\n\n"
                      "The original data is provided by the European Centre for Disease Prevention and Control (EDCD). "
                      "For more information on their copyright policy, check out this link: "
                      "https://www.ecdc.europa.eu/en/copyright\n\nThe idea for this bot was inspired by @reispflanze, "
                      "who also designed its logo. The bot itself was written in Python by me, @Jakob_Schoedl. Do not "
-                     "hesitate to contact me with your feedback, bugs and problems!",
-                     update)
+                     "hesitate to contact me with your feedback, bugs and problems!", update)
     return MENU
 
 
-def user_predictions(update, context):
+def user_predictions(update, _):
     global database
     user_id = update.message.from_user.id
-    refresh_scores(database, covid_stats, update, force=DEBUG_SCORES)
-    send_pending_messages(database['users'])
     scores: dict = database['users'][user_id]['scores']
 
     if not scores:
@@ -558,14 +552,6 @@ def user_predictions(update, context):
         text = "Every day, you can get up to 1 point per country, depending on how close your estimate is to the " \
                "number of actually reported cases. If you give a new prediction for a country, its score counter will" \
                " start at 0 again.\n\n"
-
-        def to_datetime(x):
-            return datetime.datetime(x.year, x.month, x.day)
-
-        time_left = to_datetime(database['scores_update']) + datetime.timedelta(days=1,
-                                                                                hours=UPDATE_HOUR) - \
-                    datetime.datetime.now()
-        text += f"Next Update in: {str(time_left).split('.')[0]}\n\n"
 
         for country, score in scores.items():
             text += f"{get_flag(country)} {country}: {score:.3f}\n"
@@ -594,13 +580,17 @@ def country_details(update, context):
         updater.bot.send_chat_action(update.message.from_user.id, ChatAction.UPLOAD_PHOTO)
         country_predictions = user_data['predictions'][country]
         temp_lock.acquire()
-        charts.visualize_afterwards(country, country_predictions, internal.TEMP_PATH,
-                                    covid_stats)
-        with open(internal.TEMP_PATH, "rb") as f:
-            update.message.reply_photo(
-                photo=f
-            )
-        temp_lock.release()
+        try:
+            charts.visualize([country, country], [country_predictions, country_predictions], internal.TEMP_PATH,
+                             covid_stats, titles=[f"Daily reported Covid-19-infections "
+                                                  f"{'for the whole' if country == 'World' else 'in'} {country}", ""],
+                             offsets=[[300, 300], [10, 10]])
+            with open(internal.TEMP_PATH, "rb") as f:
+                update.message.reply_photo(
+                    photo=f
+                )
+        finally:
+            temp_lock.release()
         return COUNTRY_DETAILS
     else:
         fancy_error(update, context)
@@ -619,7 +609,7 @@ def unknown_outside_conversation(update, context):
     fancy_error(update, context, internal_error=True)
 
 
-def fancy_error(update, context, type_error=False, internal_error=False):
+def fancy_error(update, _, type_error=False, internal_error=False):
     first = (
         "Wow", "Hey", "Oops", "Wait", "Sorry", "Wait a minute", "Oh no", "Well", "Ouch")
     second = ("this", "this message", "your response", "this response")
@@ -669,83 +659,89 @@ def upgrade_user_data(users, user_params):
         users[user_id] = user_data
 
 
-def send_pending_messages(users):
-    for user_id, user_data in copy(users).items():
-        if (not TEST and user_data['update_notifications']) or user_id == internal.ADMIN_USER:
-            for update_id, text in UPDATES.items():
-                if user_data['last_update'] < update_id:
-                    try:
-                        send_start_markup(text, chat_id=user_id)
-                        user_data['last_update'] = update_id
-                    except Unauthorized:
-                        try:
-                            del users[user_id]
-                            logging.info(f"Removed user {user_id}")
-                        except:
-                            logging.error(f"Could not remove {user_id}")
-        if user_id in users and ((not TEST and user_data[
-            'scheduled_updates_interval']) or user_id == internal.ADMIN_USER):
-            if not user_data['last_scheduled_update']:
-                logging.error(
-                    f"No last scheduled update interval set for user {user_id}.")
-            else:
-                if datetime.date.today() - user_data['last_scheduled_update'] >= \
-                        user_data['scheduled_updates_interval']:
-                    try:
-                        updater.bot.send_chat_action(user_id, ChatAction.UPLOAD_PHOTO)
+def update_database(database: dict, covid_stats: Data, test_environment: bool, temp_lock: Semaphore, updater: Updater):
+    """
+    Download new Covid-19-statistics and send special types of notifications every 24h.
+    This function is called as multiprocessing.Process.
+    """
+    while True:
+        # download new statistics
+        logging.info(f"last scores update: {database['scores_update']}")
+        if database['scores_update'] != datetime.datetime.now().date():
+            logging.info("updating..")
+            for user_id, user_data in database['users'].items():
+                for country, prediction in user_data['predictions'].items():
+                    user_data['scores'][country] = get_score(country, covid_stats, get_daily(prediction))
+            database['scores_update'] = datetime.datetime.now().date()
+            print(database['scores_update'])
 
-                        greetings = (
-                            "Hi there", "Hey there", "Hello there", "Hi", "Hey", "Hello",
-                            "What's up",
-                            "Cheers", "Woohoo")
-                        if not user_data['limits_note']:
-                            note = " Due to limitations of Telegram, I have to send it as a document."
-                            user_data['limits_note'] = True
-                        else:
-                            note = ""
-                        temp_lock.acquire()
-                        charts.visualize_all(user_data['predictions'], internal.TEMP_PATH,
-                                             covid_stats)
-                        # send uncompressed
-                        with open(internal.TEMP_PATH, "rb") as f:
-                            updater.bot.send_document(
-                                chat_id=user_id,
-                                document=f,
-                                caption=f"{random.choice(greetings)}, here is your prediction report!{note}"
-                            )
-                        user_data['last_scheduled_update'] = datetime.date.today()
-                    except Unauthorized:
+        # send pending messages
+        users = database['users']
+        for user_id, user_data in copy(users).items():
+            # update notifications
+            if (not test_environment and user_data['update_notifications']) or user_id == internal.ADMIN_USER:
+                for update_id, text in UPDATES.items():
+                    if user_data['last_update'] < update_id:
                         try:
-                            del users[user_id]
-                            logging.info(f"Removed user {user_id}")
-                        except:
-                            logging.error(f"Could not remove {user_id}")
-                    finally:
-                        temp_lock.release()
+                            send_start_markup(text, chat_id=user_id)
+                            user_data['last_update'] = update_id
+                        except Unauthorized:
+                            try:
+                                del users[user_id]
+                                logging.info(f"Removed user {user_id}")
+                            except:
+                                logging.error(f"Could not remove {user_id}")
+            # scheduled updates
+            if user_id in users and ((not test_environment and user_data['scheduled_updates_interval']) or
+                                     user_id == internal.ADMIN_USER):
+                if not user_data['last_scheduled_update']:
+                    logging.error(
+                        f"No last scheduled update interval set for user {user_id}.")
+                else:
+                    if datetime.date.today() - user_data['last_scheduled_update'] >= \
+                            user_data['scheduled_updates_interval']:
+                        try:
+                            # noinspection PyTypeChecker
+                            updater.bot.send_chat_action(user_id, ChatAction.UPLOAD_PHOTO)
+
+                            greetings = (
+                                "Hi there", "Hey there", "Hello there", "Hi", "Hey", "Hello",
+                                "What's up",
+                                "Cheers", "Woohoo")
+                            if not user_data['limits_note']:
+                                note = " Due to limitations of Telegram, I have to send it as a document."
+                                user_data['limits_note'] = True
+                            else:
+                                note = ""
+                            temp_lock.acquire()
+                            charts.visualize(user_data['predictions'].keys(), user_data['predictions'].values(),
+                                             internal.TEMP_PATH, covid_stats)
+                            # send uncompressed
+                            with open(internal.TEMP_PATH, "rb") as f:
+                                updater.bot.send_document(
+                                    chat_id=user_id,
+                                    document=f,
+                                    caption=f"{random.choice(greetings)}, here is your prediction report!{note}"
+                                )
+                            user_data['last_scheduled_update'] = datetime.date.today()
+                        except Unauthorized:
+                            try:
+                                del users[user_id]
+                                logging.info(f"Removed user {user_id}")
+                            except:
+                                logging.error(f"Could not remove {user_id}")
+                        finally:
+                            temp_lock.release()
+        now = datetime.datetime.now()
+        tomorrow = datetime.datetime(now.year, now.month, now.day + 1)
+        logging.info(f"next database update: {(tomorrow - now)}")
+        time.sleep((tomorrow - now).total_seconds())
 
 
 if __name__ == "__main__":
     logging.basicConfig(format='%(name)s - %(levelname)s - %(message)s',
                         level=logging.INFO)
     warnings.filterwarnings("ignore", message="Starting a Matplotlib GUI outside of the main thread will likely fail.")
-
-    if internal.is_test_environment():
-        token = internal.TEST_TOKEN
-        logging.info("Starting with test token")
-        TEST = True
-        DEBUG_SCORES = False
-    else:
-        token = internal.REAL_TOKEN
-        logging.info("Starting with real token")
-        TEST = DEBUG_SCORES = False
-
-    updater = Updater(token=token,
-                      use_context=True)
-    dispatcher = updater.dispatcher
-
-    last_restart = datetime.datetime.today()
-
-    temp_lock = Semaphore()
 
     SUPPORTED_COUNTRIES = [
         "🗺️ World",
@@ -816,7 +812,6 @@ if __name__ == "__main__":
         "🇺🇸 United States",
         "🇻🇳 Vietnam",
     ]
-
     UPDATES = {
         1: "Hey there, High Scores are now unlocked! If you do not want to receive any more messages on major updates, "
            "check out the new notification setting in the Preferences.\n\nNow, there is also a Changelog available: "
@@ -850,13 +845,28 @@ if __name__ == "__main__":
         "ℹ About": about,
     }
 
+    if internal.is_test_environment():
+        token = internal.TEST_TOKEN
+        logging.info("Starting with test token")
+        test_environment = True
+        DEBUG_SCORES = False
+    else:
+        token = internal.REAL_TOKEN
+        logging.info("Starting with real token")
+        test_environment = DEBUG_SCORES = False
+
+    updater = Updater(token=token,
+                      use_context=True)
+    dispatcher = updater.dispatcher
+    temp_lock = Semaphore()
     covid_stats = Data()
 
     database = load_database(
-        base_params={
-            'scores_update': None,  # type: datetime.date
-            'users': dict()
-        })
+        base=multiprocessing.Manager().dict({
+            'scores_update': None,
+            'users': dict(),
+        }),
+    )
     upgrade_user_data(
         database['users'],
         {
@@ -870,8 +880,10 @@ if __name__ == "__main__":
         }
     )
 
-    refresh_scores(database, covid_stats)
-    send_pending_messages(database['users'])
+    multiprocessing.Process(
+        target=update_database,
+        args=(database, covid_stats, test_environment, temp_lock, updater),
+    ).start()
 
     conversation_states = {
         MENU: [MessageHandler(Filters.text(MENU_OPTIONS.keys()), menu)],

@@ -5,14 +5,14 @@ import numpy as np
 from PIL import Image
 from matplotlib.dates import date2num
 
-import images
+import charts
 
 LINE_THRESHOLD = 0.8  # relative to maximum change
 
 
 def evaluate(prediction_path, country, drawing_area, covid_stats):
     pred_image = Image.open(prediction_path)
-    country_image = Image.open(f"{images.IMAGES_PATH}/{country}.jpg")
+    country_image = Image.open(f"{charts.IMAGES_PATH}/{country}.jpg")
     if not pred_image.size == country_image.size:
         logging.error("The size of the submitted image is not equal to the original size.")
         return "The size of the submitted image is not equal to the original size. Please try again."
@@ -53,8 +53,16 @@ def evaluate(prediction_path, country, drawing_area, covid_stats):
         else:
             line.append(np.min(row) + line_thickness / 2)
 
-    data = covid_stats.get("date", "new_cases_smoothed", location=country)[-1]
-    last_date, last_value = date2num(data[0]), float(data[1])
+    data = covid_stats.get("date", "new_cases_smoothed", location=country)
+
+    for i in range(1, 4):
+        try:
+            last_date, last_value = date2num(data[-i][0]), float(data[-i][1])
+            break
+        except ValueError:
+            logging.error(f"No data for {country} available (attempt {i}).")
+    else:
+        raise ValueError(f"There is no readable data for {country}.")
 
     raw_predictions = dict()
     raw_predictions[date2num(datetime.date.today())] = last_value
@@ -67,5 +75,5 @@ def evaluate(prediction_path, country, drawing_area, covid_stats):
     if not line:
         return "No line was found. Please try again."
 
-    raw_predictions[date2num(datetime.date.today() + datetime.timedelta(days=images.N_PREDICTED_DAYS))] = last
+    raw_predictions[date2num(datetime.date.today() + datetime.timedelta(days=charts.N_PREDICTED_DAYS))] = last
     return raw_predictions

@@ -1,24 +1,7 @@
 import datetime
 import logging
 
-import telegram
 from matplotlib.dates import date2num
-
-from data import UPDATE_HOUR
-
-
-def refresh_scores(database, covid_stats, update: telegram.Update = None, force=False):
-    logging.info(f"last scores update: {database['scores_update']}")
-    if force or database['scores_update'] != (datetime.datetime.now() - datetime.timedelta(hours=UPDATE_HOUR)).date():
-        logging.info("updating..")
-        if update:
-            update.message.reply_text("Looks like the database is outdated. Let me refresh it! Just wait a few moments,"
-                                      " please! This can take up to one minute.")
-        for user_id, user_data in database['users'].items():
-            for country, prediction in user_data['predictions'].items():
-                user_data['scores'][country] = get_score(country, covid_stats, get_daily(prediction))
-        database['scores_update'] = (datetime.datetime.now() - datetime.timedelta(hours=UPDATE_HOUR)).date()
-    return database
 
 
 def get_daily(prediction: dict) -> dict:
@@ -26,7 +9,7 @@ def get_daily(prediction: dict) -> dict:
     index = 0
     daily_predictions = dict()
 
-    # bugfix for older profiles, do not remove
+    # bugfix for older profiles
     if dates[0] > dates[1]:
         current_date = dates[1]
 
@@ -57,7 +40,7 @@ def get_score(country, covid_stats, daily_predictions: dict):
                         cases_actual = float(cases_actual)
                     except ValueError:
                         logging.error(
-                            f"Could not convert string to float: '{cases_actual}'")
+                            f"No valid data for {country} available.")
                     else:
                         if cases_actual == 0 or cases_pred == 0:
                             score += cases_actual == cases_pred
@@ -68,3 +51,4 @@ def get_score(country, covid_stats, daily_predictions: dict):
             else:
                 break
     return float(score)
+

@@ -11,7 +11,6 @@ TEMP_DIR = ".covid_data"
 # https://github.com/owid/covid-19-data/tree/master/public/data#our-data-sources
 # Please check out the information regarding the license as well.
 CSV_SOURCE = "https://covid.ourworldindata.org/data/owid-covid-data.csv"
-UPDATE_HOUR = 12
 
 
 class Data:
@@ -26,7 +25,7 @@ class Data:
         """
         Check whether the currently used data is outdated.
         """
-        return (datetime.datetime.now() - datetime.timedelta(hours=UPDATE_HOUR)).date() != self.last_update
+        return datetime.datetime.now().date() != self.last_update
 
     def refresh(self) -> bool:
         """
@@ -45,7 +44,7 @@ class Data:
         If no data has been downloaded for the current day, all csv files in TEMP_DIR are deleted and a new record is
         downloaded. In any case the values are read from the csv file for the current day.
         """
-        path = f"{TEMP_DIR}/{(datetime.datetime.now() - datetime.timedelta(hours=UPDATE_HOUR)).date()}.csv"
+        path = f"{TEMP_DIR}/{datetime.datetime.now().date()}.csv"
         if not os.path.exists(path):
             os.makedirs(TEMP_DIR, exist_ok=True)
             for file in glob.glob(f"{TEMP_DIR}/*.csv"):
@@ -53,7 +52,7 @@ class Data:
             data = requests.get(CSV_SOURCE)
             with open(path, "w") as f:
                 f.write(data.text)
-        self.last_update = (datetime.datetime.now() - datetime.timedelta(hours=UPDATE_HOUR)).date()
+        self.last_update = datetime.datetime.now().date()
 
         with open(path) as f:
             lines = f.readlines()
@@ -93,3 +92,4 @@ class Data:
                 res.append(filter_row(row))
 
         return res
+
