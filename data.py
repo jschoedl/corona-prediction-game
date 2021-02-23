@@ -5,39 +5,19 @@ import warnings
 
 import requests
 
-TEMP_DIR = ".covid_data"
-
-# This dataset is kept up to date by Our World in Data. More about their sources can be found here:
-# https://github.com/owid/covid-19-data/tree/master/public/data#our-data-sources
-# Please check out the information regarding the license as well.
-CSV_SOURCE = "https://covid.ourworldindata.org/data/owid-covid-data.csv"
+from constants import CSV_SOURCE, TEMP_DIR
 
 
-class Data:
-    def __init__(self):
+class CPGameData(dict):
+    def __init__(self, source: dict):
         self.last_update = None
         self.titles = []
         self.values = ()
 
-        self.update()
+        self.update_stats()
+        super().__init__(source)
 
-    def check_refresh(self) -> bool:
-        """
-        Check whether the currently used data is outdated.
-        """
-        return datetime.datetime.now().date() != self.last_update
-
-    def refresh(self) -> bool:
-        """
-        Run self.update if the currently used data is outdated.
-        :return: True if self.update was executed, otherwise False.
-        """
-        if self.check_refresh():
-            self.update()
-            return True
-        return False
-
-    def update(self):
+    def update_stats(self):
         """
         Load or update the statistics for Covid-19.
 
@@ -57,9 +37,9 @@ class Data:
         with open(path) as f:
             lines = f.readlines()
         self.titles = lines[0][:-1].split(",")
-        self.values = tuple(line[:-1].split(",") for line in lines[1:])
+        self.values = tuple(line[:-1].split(",")[:7] for line in lines[1:])  # discard right part of the table
 
-    def get(self, *titles, refresh_database=True, **filters) -> list:
+    def get(self, *titles, **filters) -> list:
         """
         Return certain information from the dataset.
 
@@ -68,11 +48,8 @@ class Data:
 
         :param titles: titles of the columns to return
         :param filters: values in certain columns to search for
-        :param refresh_database: run self.refresh to make sure the database is up to date
         :return: list with rows, whereas each row is a list of values in order of the given column titles
         """
-        if refresh_database:
-            self.refresh()
 
         for filter_title in filters.keys():
             if filter_title not in self.titles:
@@ -92,4 +69,3 @@ class Data:
                 res.append(filter_row(row))
 
         return res
-

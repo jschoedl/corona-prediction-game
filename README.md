@@ -13,3 +13,59 @@ Due to the use of the library ```multiprocessing``` errors might occur when runn
 2. Create a new Telegram bot using [@BotFather](https://t.me/BotFather)
 3. Insert the bot token at internals.py
 4. Run the script: ```python main.py```
+
+## Data structures
+
+### database
+
+- scores_update: datetime.datetime
+- users: dict
+    - (user id): int
+        - chart_scale: float
+        - drawing_area: tuple
+        - drawing_update: datetime.date
+        - high_scores_view: str
+        - last_conversation_state: int
+        - last_scheduled_update: datetime.datetime
+        - last_update: int
+        - limits_note: bool
+        - nickname: str
+        - nickname_confirmed: False
+        - predictions: dict
+        - recent_prediction: dict
+        - recent_country: str
+        - scheduled_updates_interval: None
+        - scores: dict
+        - scores_daily: dict
+        - update_notifications: bool
+- high_scores: list
+- high_scores_daily: list
+- groups: dict
+    - (chat id):int
+        - configurations: dict
+            - (config ids): int
+                - bets: dict
+                - country: str
+                - duration: datetime.timedelta
+                - submissions: str
+                - user: int
+- challenges: dict
+    - (challenge id): int
+        - bets: dict
+        - chat_id: int
+        - country: str
+        - duration: datetime.timedelta
+        - end: datetime.date
+        - id: int
+        - message_id: int
+        - submissions: str
+        - submission_end: datetime.datetime
+        - user: int
+
+### context.user_data
+
+- action: str
+- challenge_active: bool
+- challenge_id: int
+- chat_id: int
+- config_id: int

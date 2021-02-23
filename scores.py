@@ -18,8 +18,8 @@ def get_daily(prediction: dict) -> dict:
             index += 1
         else:
             timespan = dates[index + 1] - dates[index]
-            weight1 = current_date - dates[index]
-            weight2 = dates[index + 1] - current_date
+            weight1 = dates[index + 1] - current_date
+            weight2 = current_date - dates[index]
             cases = (prediction[dates[index]] * weight1 + prediction[dates[index + 1]] * weight2) / timespan
 
             if cases < 0: cases = 0
@@ -29,26 +29,26 @@ def get_daily(prediction: dict) -> dict:
     return daily_predictions
 
 
-def get_score(country, covid_stats, daily_predictions: dict):
+def get_score(country, covid_stats, daily_predictions: dict) -> (float, float):
     data = covid_stats.get("date", "new_cases_smoothed", location=country)
     score = 0
+    days = 0
     for i, (date_pred, cases_pred) in enumerate(daily_predictions.items()):
-        if i:
-            for date_actual, cases_actual in data:
-                if date_pred == date2num(datetime.date.fromisoformat(date_actual)):
-                    try:
-                        cases_actual = float(cases_actual)
-                    except ValueError:
-                        logging.error(
-                            f"No valid data for {country} available.")
+        for date_actual, cases_actual in data:
+            if date_pred == date2num(datetime.date.fromisoformat(date_actual)):
+                try:
+                    cases_actual = float(cases_actual)
+                except ValueError:
+                    logging.error(
+                        f"No valid data for {country} available.")
+                else:
+                    if cases_actual == 0 or cases_pred == 0:
+                        score += cases_actual == cases_pred
                     else:
-                        if cases_actual == 0 or cases_pred == 0:
-                            score += cases_actual == cases_pred
-                        else:
-                            score += min(cases_actual / cases_pred,
-                                         cases_pred / cases_actual)
-                        break
-            else:
-                break
-    return float(score)
-
+                        score += min(cases_actual / cases_pred,
+                                     cases_pred / cases_actual)
+                    days += 1
+                    break
+        else:
+            break
+    return float(score), float(score)/(days if score else 1)

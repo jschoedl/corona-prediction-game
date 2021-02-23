@@ -1,13 +1,41 @@
 import datetime
 import math
 import os
-from glob import glob
 
 import numpy as np
+from dateutil.relativedelta import relativedelta
 from matplotlib import pyplot as plt
 from matplotlib.dates import date2num
+from matplotlib.ticker import MaxNLocator, FixedLocator
 
 import scores
+from constants import IMAGES_PATH, N_PREDICTED_DAYS
+
+
+def get_locations(starting_date: datetime.date, ending_date: datetime.date, max_n=5):
+    delta = ending_date - starting_date
+    rel_delta = relativedelta(ending_date, starting_date)
+    if rel_delta.years > max_n:
+        space = relativedelta(years=rel_delta.years // max_n)
+    elif rel_delta.months + rel_delta.years * 12 > max_n:
+        space = relativedelta(months=(rel_delta.months + rel_delta.years * 12) // max_n)
+    elif delta.days // 7 > max_n:
+        space = relativedelta(weeks=delta.days // 7 // max_n)
+    elif delta.days > max_n:
+        space = relativedelta(days=delta.days // max_n)
+    else:
+        space = relativedelta(days=1)
+
+    out = []
+    recent_date = ending_date
+    while recent_date > starting_date:
+        out.insert(0, recent_date)
+        recent_date -= space
+
+    for i, date in enumerate(out):
+        out[i] = date2num(date)
+
+    return out
 
 
 def visualize(countries: list, predictions: list, img_path, covid_stats, titles=None, offsets=None):
@@ -65,11 +93,13 @@ def visualize(countries: list, predictions: list, img_path, covid_stats, titles=
         ax.grid(True)
         ax.legend()
         ax.set_title(title)
+        ax.xaxis.set_major_locator(MaxNLocator(7))
 
     plt.savefig(img_path)
+    plt.close()
 
 
-def visualize_for_confirmation(country, predictions, img_path, covid_stats):
+def visualize_for_confirmation(country, predictions, img_path, covid_stats, chart_scale):
     data = covid_stats.get("date", "new_cases_smoothed", location=country)
     x_data = []
     y_data = []
@@ -86,30 +116,25 @@ def visualize_for_confirmation(country, predictions, img_path, covid_stats):
     ax.plot(x_data, y_data)
     ax.plot(predictions.keys(), predictions.values())
     plt.xlim(right=datetime.date.today() + datetime.timedelta(days=N_PREDICTED_DAYS))
-    plt.ylim(top=max(y_data) * 3)
+    plt.ylim(bottom=0, top=max(y_data) * chart_scale)
+    ax.xaxis.set_major_locator(MaxNLocator(7))
 
     plt.title(f"New Infections {'for the whole' if country == 'World' else 'in'} {country} per Day (smoothed)")
     ax.grid(True)
     plt.savefig(img_path)
+    plt.close()
 
 
-def visualize_for_input(country, covid_stats, force=False):
+def visualize_for_input(country,
+                        covid_stats,
+                        end_date=None,
+                        chart_scale=3,
+                        starting_date=None):
+    if end_date is None:
+        end_date = datetime.date.today() + datetime.timedelta(days=N_PREDICTED_DAYS)
+    if starting_date is None:
+        starting_date = datetime.date.today() - datetime.timedelta(days=365)
     os.makedirs(IMAGES_PATH, exist_ok=True)
-    update_path = f"{IMAGES_PATH}/last_update.txt"
-
-    # return if cached
-    if os.path.exists(update_path):
-        with open(update_path) as f:
-            content = f.read()
-        if content == str(datetime.datetime.today().date()):
-            if not force and os.path.exists(f"{IMAGES_PATH}/{country}.jpg"):
-                return
-        else:
-            for img_path in glob(f"{IMAGES_PATH}/*.jpg"):
-                os.remove(img_path)
-    else:
-        for img_path in glob(f"{IMAGES_PATH}/*.jpg"):
-            os.remove(img_path)
 
     # generate new visualisation
     data = covid_stats.get("date", "new_cases_smoothed", location=country)
@@ -117,23 +142,24 @@ def visualize_for_input(country, covid_stats, force=False):
     y_data = []
     for date, new_cases in data:
         try:
+            date = datetime.date.fromisoformat(date)
             n = float(new_cases)
-            if n > 0:
-                x_data.append(datetime.date.fromisoformat(date))
+            if date > starting_date:
+                x_data.append(date)
                 y_data.append(n)
         except ValueError:
             pass
 
     fig, ax = plt.subplots(figsize=(8, 4))
     ax.plot(x_data, y_data)
-    plt.xlim(right=datetime.date.today() + datetime.timedelta(days=N_PREDICTED_DAYS))
-    plt.ylim(top=max(y_data) * 3)
+    plt.xlim(right=end_date)
+    plt.ylim(bottom=0, top=max(y_data) * chart_scale)
+    ax.xaxis.set_major_locator(
+        FixedLocator(get_locations(x_data[0], end_date)))
 
     plt.title(f"New Infections {'for the whole' if country == 'World' else 'in'} {country} per Day (smoothed)")
     ax.grid(True)
     plt.savefig(f"{IMAGES_PATH}/{country}.jpg")
-    with open(f"{IMAGES_PATH}/last_update.txt", "w") as f:
-        f.write(str(datetime.datetime.today().date()))
 
     # drawing area
     x0, y0 = ax.transData.transform((date2num(x_data[-1]), plt.ylim()[0]))
@@ -141,8 +167,5 @@ def visualize_for_input(country, covid_stats, force=False):
 
     x_factor = (plt.xlim()[1] - date2num(x_data[-1])) / (x1 - x0)
     y_factor = (plt.ylim()[1] - plt.ylim()[0]) / (y1 - y0)
+    plt.close()
     return x0, y0, x1, y1, x_factor, y_factor
-
-
-IMAGES_PATH = ".covid_images"
-N_PREDICTED_DAYS = 150

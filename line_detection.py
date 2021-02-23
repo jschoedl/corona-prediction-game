@@ -6,8 +6,7 @@ from PIL import Image
 from matplotlib.dates import date2num
 
 import charts
-
-LINE_THRESHOLD = 0.8  # relative to maximum change
+from constants import LINE_THRESHOLD
 
 
 def evaluate(prediction_path, country, drawing_area, covid_stats):
@@ -66,13 +65,14 @@ def evaluate(prediction_path, country, drawing_area, covid_stats):
 
     raw_predictions = dict()
     raw_predictions[date2num(datetime.date.today())] = last_value
+    last = None
     for i, point in enumerate(line):
         if not np.isnan(point):
             cases = (y1 - y0 - y_offset - point) * y_factor
             if cases < 0: cases = 0
             last = raw_predictions[date2num(datetime.date.today()) +
                                    (x_offset + i) * x_factor] = cases
-    if not line:
+    if not line or last is None:
         return "No line was found. Please try again."
 
     raw_predictions[date2num(datetime.date.today() + datetime.timedelta(days=charts.N_PREDICTED_DAYS))] = last
