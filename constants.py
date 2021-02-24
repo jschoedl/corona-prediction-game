@@ -3,25 +3,25 @@
 ############################
 
 # Telegram Bot Token (Get a new one from @BotFather)
-TEST_TOKEN = "1329741940:AAEe7DR7OcNLMod_11usCN7bYOV9MwuWC6U"
+TEST_TOKEN = ""
 
 TEMP_PATH = ".temp.jpg"
 DATABASE_PATH = "database.gz"
 
 
 def is_test_environment():
-    return len(s := __file__.split("/")) > 2 and s[2] == "jakob"
+    return True
 
 
 # You can leave the following parameters unfilled if you keep running in the test environment.
 
-REAL_TOKEN = "1330487511:AAHftSuTgG92r-JHK9HqftoPo7rhn5YNI18"
+REAL_TOKEN = ""
 
 # Telegram chat with the administrator
-ADMIN_USER = 598790891
+ADMIN_USER = 0000000000
 
 # API keys for backups
-DROPBOX_TOKEN = "6MYiyFqUOCoAAAAAAAAAAV6VRMbT-myRD-TwaYg9VBk4h5ZQlMO80otTvwawFpY5"
+DROPBOX_TOKEN = ""
 DROPBOX_PATH = "/database.gz"
 
 ############################
