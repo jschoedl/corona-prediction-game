@@ -37,6 +37,9 @@ Due to the use of the library ```multiprocessing``` errors might occur when runn
         - scheduled_updates_interval: None
         - scores: dict
         - scores_daily: dict
+        - scores_persistent: dict
+        - persistency_notification_sent: list
+            - (country name): str
         - update_notifications: bool
 - high_scores: list
 - high_scores_daily: list

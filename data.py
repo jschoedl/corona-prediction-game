@@ -1,7 +1,6 @@
 import datetime
 import glob
 import os
-import warnings
 
 import requests
 
@@ -53,7 +52,7 @@ class CPGameData(dict):
 
         for filter_title in filters.keys():
             if filter_title not in self.titles:
-                warnings.warn(f"'{filter_title}' is not a valid filter and will be ignored.", stacklevel=2)
+                raise ValueError(f"'{filter_title}' is not a valid filter.")
 
         res = []
         res_indices = [self.titles.index(arg) for arg in titles]

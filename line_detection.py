@@ -6,12 +6,13 @@ from PIL import Image
 from matplotlib.dates import date2num
 
 import charts
+import constants
 from constants import LINE_THRESHOLD
 
 
 def evaluate(prediction_path, country, drawing_area, covid_stats):
     pred_image = Image.open(prediction_path)
-    country_image = Image.open(f"{charts.IMAGES_PATH}/{country}.jpg")
+    country_image = Image.open(f"{constants.IMAGES_PATH}/{country}.jpg")
     if not pred_image.size == country_image.size:
         logging.error("The size of the submitted image is not equal to the original size.")
         return "The size of the submitted image is not equal to the original size. Please try again."
@@ -43,7 +44,7 @@ def evaluate(prediction_path, country, drawing_area, covid_stats):
     for column in line_pixels:
         if len(column) > 1:
             thicknesses.append(max(column) - min(column))
-    line_thickness = np.median(thicknesses)
+    line_thickness = np.quantile(thicknesses, 0.2)
 
     line = []
     for row in line_pixels:

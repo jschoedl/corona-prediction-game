@@ -5,6 +5,7 @@ from matplotlib.dates import date2num
 
 
 def get_daily(prediction: dict) -> dict:
+    """Convert a raw prediction into a series of numbers, one for each predicted day."""
     current_date, *_, end_date = dates = list(prediction.keys())
     index = 0
     daily_predictions = dict()
@@ -30,6 +31,7 @@ def get_daily(prediction: dict) -> dict:
 
 
 def get_score(country, covid_stats, daily_predictions: dict) -> (float, float):
+    """Get the total and daily score of a user."""
     data = covid_stats.get("date", "new_cases_smoothed", location=country)
     score = 0
     days = 0

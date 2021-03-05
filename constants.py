@@ -32,6 +32,7 @@ TEMP_DIR = ".covid_data"
 CSV_SOURCE = "https://covid.ourworldindata.org/data/owid-covid-data.csv"
 IMAGES_PATH = ".covid_images"
 N_PREDICTED_DAYS = 150
+N_DAYS_FOR_PERSISTENCY = 130
 LINE_THRESHOLD = 0.8
 
 ############################
@@ -54,6 +55,8 @@ HIGH_SCORES = 50
 
 PROCESS_UNKNOWN = 61
 
+GREETINGS = ("Hi", "Hey", "Hello", "What's up", "Cheers")
+
 UPDATES = {
     1: "Hey there, High Scores are now unlocked! If you do not want to receive any more messages on major updates, "
        "check out the new notification setting in the Preferences.\n\nNow, there is also a Changelog available: "
@@ -61,6 +64,9 @@ UPDATES = {
     2: "Hi everyone, now you can schedule daily or weekly updates containing a summary of your predictions in the "
        "settings!\n\nYou can disable these notifications in the settings as well. For more detailed information on "
        "new features, check out the Changelog: @cpgame_changelog",
+    3: "Hey {}, the Corona Prediction Game is now available for groups as well! Just add this bot to "
+       "a group and start a challenge. All members can participate and estimate the number of cases for one "
+       "country after a selected time."
 }
 
 SUPPORTED_COUNTRIES = [
