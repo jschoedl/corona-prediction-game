@@ -30,11 +30,10 @@ def get_daily(prediction: dict) -> dict:
     return daily_predictions
 
 
-def get_score(country, covid_stats, daily_predictions: dict) -> (float, float):
+def get_score(country, covid_stats, daily_predictions: dict) -> (float, float, float):
     """Get the total and daily score of a user."""
     data = covid_stats.get("date", "new_cases_smoothed", location=country)
-    score = 0
-    days = 0
+    score = days = last_score = 0
     for i, (date_pred, cases_pred) in enumerate(daily_predictions.items()):
         for date_actual, cases_actual in data:
             if date_pred == date2num(datetime.date.fromisoformat(date_actual)):
@@ -45,12 +44,12 @@ def get_score(country, covid_stats, daily_predictions: dict) -> (float, float):
                         f"No valid data for {country} available.")
                 else:
                     if cases_actual == 0 or cases_pred == 0:
-                        score += cases_actual == cases_pred
+                        last_score = cases_actual == cases_pred
                     else:
-                        score += min(cases_actual / cases_pred,
-                                     cases_pred / cases_actual)
+                        last_score = min(cases_actual / cases_pred,cases_pred / cases_actual)
+                    score += last_score
                     days += 1
                     break
         else:
             break
-    return float(score), float(score)/(days if score else 1)
+    return float(score), float(score)/(days if score else 1), float(last_score), days

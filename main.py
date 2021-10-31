@@ -9,7 +9,6 @@ from copy import copy
 from signal import signal, SIGTERM, SIGINT
 
 import compress_pickle
-import dropbox
 from matplotlib.dates import date2num, num2date
 from telegram import ReplyKeyboardMarkup, ReplyKeyboardRemove, ChatAction, InlineKeyboardMarkup, InlineKeyboardButton, \
     InputMediaPhoto, Bot
@@ -25,10 +24,7 @@ from scores import get_score, get_daily
 
 
 def load_database(base: CPGameData):
-    if not test_environment:
-        db = dropbox.Dropbox(constants.DROPBOX_TOKEN)
-        db.files_download_to_file(constants.DATABASE_PATH, constants.DROPBOX_PATH)
-    if not test_environment or test_environment and os.path.exists(constants.DATABASE_PATH):
+    if os.path.exists(constants.DATABASE_PATH):
         try:
             _database = compress_pickle.load(constants.DATABASE_PATH)
         except EOFError:
@@ -51,12 +47,6 @@ def backup_database(*args):
                 chat_id=constants.ADMIN_USER,
                 document=f,
             )
-        if args:
-            db = dropbox.Dropbox(constants.DROPBOX_TOKEN)
-            db.files_delete(constants.DROPBOX_PATH)
-            logging.info("deleted old database")
-            with open(constants.DATABASE_PATH, "rb") as f:
-                db.files_upload(f.read(), constants.DROPBOX_PATH)
 
     logging.info(f"Backed up database at {constants.DATABASE_PATH}.")
     if args:
@@ -182,7 +172,7 @@ def start(update, context, start_message=True):
             'chart_scale': 1.5,
             'drawing_area': None,  # type: tuple
             'drawing_update': None,  # type: datetime.date
-            'high_scores_view': None,  # type: str
+            'high_scores_view': "yesterday",  # type: str
             'last_conversation_state': constants.MENU,  # type: int
             'last_scheduled_update': None,  # type: datetime.datetime
             'last_update': list(constants.UPDATES.keys())[-1],
@@ -235,7 +225,7 @@ def prediction_caption(user_data):
     if country in user_data['predictions'].keys():
         if country in user_data['persistency_notification_sent']:
             if country not in user_data['scores_persistent'] or \
-                    user_data['scores_persistent'][country] == user_data['scores']['country']:
+                    user_data['scores_persistent'][country] == user_data['scores'][country]:
                 warning = f"\n\nℹ You already gave a prediction for this country. If you continue it will be deleted, " \
                           f"but the score stays in the High Scores."
             else:
@@ -495,15 +485,24 @@ def high_scores(update, context):
 
     content = update.message.text.lower()
     user_id = update.message.from_user.id
+    user_data = database['users'][user_id]
 
-    daily = "daily" in content or "total" not in content and database['users'][user_id][
-        'high_scores_view'] == "daily"
-    if daily:
-        database['users'][user_id]['high_scores_view'] = "daily"
-    else:
-        database['users'][user_id]['high_scores_view'] = "total"
+    if "daily" in content:
+        user_data['high_scores_view'] = "daily"
+    elif "total" in content:
+        user_data['high_scores_view'] = "total"
+    elif "yesterday" in content:
+        user_data['high_scores_view'] = "yesterday"
+    elif user_data['high_scores_view'] is None:
+        user_data['high_scores_view'] = "yesterday"
+        logging.info(f"There was no high scores view set for user {user_id}. (set to 'yesterday')")
 
-    highscores = database[('high_scores', 'high_scores_daily')[daily]]
+    highscores = database[
+        {'total': "high_scores",
+         'daily': "high_scores_daily",
+         'yesterday': "high_scores_yesterday",
+         }[user_data['high_scores_view']]
+    ]
 
     formatted_highscores = []
     for i, (score, user_id_, country) in enumerate(highscores, start=1):
@@ -517,26 +516,29 @@ def high_scores(update, context):
             except KeyError:
                 formatted_highscores.append(f"#{i} {get_flag(country)} {score:.3f}: <deleted user>")
 
-    if daily:
-        response = "Average Score per Day\n\n"
-    else:
-        response = "Total Score\n\n"
+    headings = {
+        'total': "Total Score\n\n",
+        'daily': "Daily Score\n(predictions older than 10 days)\n\n",
+        'yesterday': "Scores for the last day\n\n"
+    }
+    response = headings[user_data['high_scores_view']]
     response += "\n".join(formatted_highscores[:10] + [""] + formatted_highscores[10:])
     response += f"\n\ntotal predictions: {len(highscores)}"
 
     update.message.reply_text(
         text=response,
         reply_markup=ReplyKeyboardMarkup(
-            [["⏪ Go Back"],
-             ["Show Daily"],
-             ["Show Total"]],
+            [
+                ["⏪ Go Back"],
+                ["Daily", "Total", "Yesterday"],
+            ],
             one_time_keyboard=True,
         ))
     return constants.HIGH_SCORES
 
 
 def about(update, _):
-    send_menu_markup("This is version 2.1.0. \nChangelog: @cpgame_changelog\nGitHub: "
+    send_menu_markup("This is version 2.1.4. \nChangelog: @cpgame_changelog\nGitHub: "
                      "https://github.com/jschoedl/corona-prediction-game\n\n"
                      "This bot is using a dataset maintained by 'Our World in Data'. You can find it "
                      "here: https://github.com/owid/covid-19-data/tree/master/public/data\n\n"
@@ -768,16 +770,19 @@ def update_challenge_text(configuration):
                 ),
                 parse_mode="MarkdownV2"
             )
-        except BadRequest:
-            pass
+        except BadRequest as e:
+            logging.warning(f"Ignored a BadRequest (editing config message): {e}")
         return
 
     if len(configuration['bets']) < 2:
-        updater.bot.edit_message_caption(
-            chat_id=configuration['chat_id'],
-            message_id=configuration['message_id'],
-            caption="❌ Because less than two people participated, the challenge was aborted."
-        )
+        try:
+            updater.bot.edit_message_caption(
+                chat_id=configuration['chat_id'],
+                message_id=configuration['message_id'],
+                caption="❌ Because less than two people participated, the challenge was aborted."
+            )
+        except BadRequest as e:
+            logging.warning(f"Ignored a BadRequest (aborted challenge) : {e}")
         remove_challenge(configuration['id'])
         return
 
@@ -811,14 +816,17 @@ def update_challenge_text(configuration):
         text += f"{large(new_cases)}\n{(configuration['end'] - datetime.date.today()).days} days left"
     else:
         text += f"{large(new_cases)}\nThe challenge ends as soon as numbers for {configuration['end'].strftime('%A, %B %d')} are available\."
-    updater.bot.edit_message_caption(
-        chat_id=configuration['chat_id'],
-        message_id=configuration['message_id'],
-        caption=text,
-        parse_mode="MarkdownV2"
-    )
+    try:
+        updater.bot.edit_message_caption(
+            chat_id=configuration['chat_id'],
+            message_id=configuration['message_id'],
+            caption=text,
+            parse_mode="MarkdownV2"
+        )
+    except BadRequest as e:
+        logging.warning(f"Ignored a BadRequest (updating running challenge details): {e}")
 
-    if datetime.date.fromisoformat(last_date) > configuration['end']:
+    if datetime.date.fromisoformat(last_date) >= configuration['end']:
         new_cases = database.get('new_cases_smoothed', date=configuration['end'].isoformat(),
                                  location=configuration['country'])
         new_cases = float(new_cases[0][0])
@@ -830,20 +838,16 @@ def update_challenge_text(configuration):
 
         for i, (user_id, prediction) in enumerate(score_list[1:50], start=2):
             text += f"\#{i} {mention_from_id(user_id)}: {large(prediction)}\n"
-
-        text += escape_markdown(
-            "\nStart the next challenge using one of the following commands:\n\n"
-            "/7dayschallenge\n/30dayschallenge\n/100dayschallenge\n/oneyearchallenge",
-            version=2
-        )
-
-        updater.bot.send_message(
-            configuration['chat_id'],
-            text=text,
-            parse_mode="MarkdownV2",
-            reply_to_message_id=configuration['message_id'],
-        )
-        del database['challenges'][configuration['id']]
+        try:
+            updater.bot.send_message(
+                configuration['chat_id'],
+                text=text,
+                parse_mode="MarkdownV2",
+                reply_to_message_id=configuration['message_id'],
+            )
+            remove_challenge(configuration['id'])
+        except BadRequest as e:
+            logging.warning(f"Ignored a BadRequest (ending challenge): {e}")
 
 
 def give_challenge_prediction(update, context):
@@ -1057,46 +1061,66 @@ def update_database():
         logging.info("updating..")
         database.update_stats()
 
-        highscores, highscores_daily = [], []
+        highscores, highscores_daily, highscores_yesterday = [], [], []
         for user_id, user_data in database['users'].items():
+            persistency_countries = []
+            persistency_dates = []
             for country, prediction in user_data['predictions'].items():
                 daily_pred = get_daily(prediction)
-                score, scores_daily = get_score(country, database, daily_pred)
+                score, scores_daily, score_yesterday, days = get_score(country, database, daily_pred)
                 highscores.append((score, user_id, country))
-                highscores_daily.append((scores_daily, user_id, country))
+                if days > constants.N_DAYS_FOR_DAILY:
+                    highscores_daily.append((scores_daily, user_id, country))
+                highscores_yesterday.append((score_yesterday, user_id, country))
                 user_data['scores'][country], user_data['scores_daily'][country] = score, scores_daily
 
                 if country in user_data['persistency_notification_sent']:
                     try:
                         if score > user_data['scores_persistent'][country]:
-                            user_data['scores_persistent'] = score
+                            user_data['scores_persistent'][country] = score
                     except KeyError:
-                        logging.exception(f"could not update persistent score: country '{country}' not found")
-                elif (date2num(datetime.datetime.now()) - list(daily_pred.keys())[
-                    0]) > constants.N_DAYS_FOR_PERSISTENCY:
-                    try:
-                        updater.bot.send_message(
-                            chat_id=user_id,
-                            text=f"{random.choice(constants.GREETINGS)} {updater.bot.get_chat(user_id).first_name}, your "
-                                 f"prediction for {country} exceeded an age of {constants.N_DAYS_FOR_PERSISTENCY} days. "
-                                 f"From now on, your score ({score:.2f}) will be saved to the High Scores even if you "
-                                 f"overwrite your prediction.\n\nIf you do not give a new prediction, your score for "
-                                 f"{country} will freeze on {num2date(list(daily_pred.keys())[-1]).strftime('%A, %B %d')}."
-                        )
-                        user_data['persistency_notification_sent'].append(country)
-                        logging.info(f"Sent persistency notification for user {user_id} and country {country}.")
-                    except BadRequest:
-                        logging.error(
-                            f"Could not send persistency notification for user {user_id} and country {country}.")
+                        user_data['scores_persistent'][country] = score
+                elif (date2num(datetime.datetime.now()) - list(daily_pred.keys())[0]) > \
+                        constants.N_DAYS_FOR_PERSISTENCY:
+                    persistency_countries.append(country)
+                    persistency_dates.append(num2date(list(daily_pred.keys())[-1]))
             for country, score in user_data['scores_persistent'].items():
-                if score != user_data['scores'][country]:
+                if abs(score-user_data['scores'][country]) > 1:
                     highscores.append((score, user_id, country))
-
-        highscores.sort(reverse=True, key=lambda x: x[0])
-        highscores_daily.sort(reverse=True, key=lambda x: x[0])
+            try:
+                if len(persistency_countries) > 1:
+                    countries = "\n".join(persistency_countries)
+                    updater.bot.send_message(
+                        chat_id=user_id,
+                        text=f"{random.choice(constants.GREETINGS)} {updater.bot.get_chat(user_id).first_name}, your "
+                             f"prediction for the following countries exceeded an age of "
+                             f"{constants.N_DAYS_FOR_PERSISTENCY} days:\n\n{countries}\n\nFrom now on, your scores in "
+                             f"these countries will be saved to the High Scores even if you overwrite your "
+                             f"prediction.\n\nIf you do not give a new prediction, the scores will freeze on "
+                             f"{min(persistency_dates).strftime('%A, %B %d')}."
+                    )
+                elif persistency_countries:
+                    updater.bot.send_message(
+                        chat_id=user_id,
+                        text=f"{random.choice(constants.GREETINGS)} {updater.bot.get_chat(user_id).first_name}, your "
+                             f"prediction for {country} exceeded an age of {constants.N_DAYS_FOR_PERSISTENCY} days. "
+                             f"From now on, your score ({score:.2f}) will be saved to the High Scores even if you "
+                             f"overwrite your prediction.\n\nIf you do not give a new prediction, your score for "
+                             f"{country} will freeze on {num2date(list(daily_pred.keys())[-1]).strftime('%A, %B %d')}."
+                    )
+                for country in persistency_countries:
+                    user_data['persistency_notification_sent'].append(country)
+                    logging.info(f"Sent persistency notification for user {user_id} and country {country}.")
+            except (BadRequest, Unauthorized):
+                logging.error(f"Could not send persistency notification for user {user_id} and country {country}.")
+            except:
+                logging.exception("While updating persistency notifications:")
+        for h in (highscores, highscores_daily, highscores_yesterday):
+            h.sort(reverse=True, key=lambda x: x[0])
 
         database['high_scores'] = highscores
         database['high_scores_daily'] = highscores_daily
+        database['high_scores_yesterday'] = highscores_yesterday
         database['scores_update'] = datetime.datetime.now().date()
 
     # send pending messages
@@ -1158,7 +1182,7 @@ def update_database():
                             finally:
                                 temp_lock.release()
                             user_data['last_scheduled_update'] = datetime.date.today()
-                        except Unauthorized:
+                        except (Unauthorized, BadRequest):
                             try:
                                 del users[user_id]
                                 logging.info(f"Removed user {user_id}")
@@ -1271,6 +1295,7 @@ if __name__ == "__main__":
             'users': dict(),
             'high_scores': [],
             'high_scores_daily': [],
+            'high_scores_yesterday': [],
             'groups': dict(),
             'challenges': dict(),
         })
@@ -1328,6 +1353,8 @@ if __name__ == "__main__":
 
     dispatcher.add_handler(MessageHandler(Filters.all, handle_message))
 
+    for challenge_id_ in database['challenges'].keys():
+        set_challenge_updater(challenge_id_)
     # noinspection PyTypeChecker
     signal(SIGINT, backup_database)
     # noinspection PyTypeChecker

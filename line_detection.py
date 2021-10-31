@@ -1,6 +1,5 @@
 import datetime
 import logging
-
 import numpy as np
 from PIL import Image
 from matplotlib.dates import date2num
@@ -8,9 +7,18 @@ from matplotlib.dates import date2num
 import charts
 import constants
 from constants import LINE_THRESHOLD
+from data import CPGameData
 
 
-def evaluate(prediction_path, country, drawing_area, covid_stats):
+def evaluate(prediction_path: str, country: str, drawing_area: tuple, covid_stats: CPGameData) -> dict:
+    """
+    Detect a line and convert it into numerical values.
+    :param prediction_path: path containing an image with the drawn line
+    :param country: predicted country
+    :param drawing_area: postition and scaling of the relevant area in the prediction image in the format (x0, y0, x1, y1, x_factor, y_factor)
+    :param covid_stats: Covid-19-statistics
+    :return: dictionary in the format date: prediction
+    """
     pred_image = Image.open(prediction_path)
     country_image = Image.open(f"{constants.IMAGES_PATH}/{country}.jpg")
     if not pred_image.size == country_image.size:
@@ -21,17 +29,20 @@ def evaluate(prediction_path, country, drawing_area, covid_stats):
     pred_data = np.sum(np.array(pred_image.getdata()), axis=1).reshape(size)
     country_data = np.sum(np.array(country_image.getdata()), axis=1).reshape(size)
 
+    # calculate the difference between original chart and prediction
     x0, y0, x1, y1, x_factor, y_factor = drawing_area
     diff = np.abs(pred_data - country_data).T[int(x0):int(x1), int(y0):int(y1)]
     x_offset = x0 % 1
     y_offset = y0 % 1
 
     line_pixels = []
-    for row in diff:
-        if np.max(row) < 150:
+    for column in diff:
+        if np.max(column) < 150:
+            # ignore noise
             line_pixels.append(np.array([]))
         else:
-            line_pixels.append(np.argwhere(row >= np.max(row) * LINE_THRESHOLD))
+            # store all pixels with a significant difference
+            line_pixels.append(np.argwhere(column >= np.max(column) * LINE_THRESHOLD))
 
     for i in line_pixels:
         if len(i):
@@ -40,6 +51,7 @@ def evaluate(prediction_path, country, drawing_area, covid_stats):
         logging.error("No line was found.")
         return "No line was found. Please try again."
 
+    # estimate the line thickness
     thicknesses = []
     for column in line_pixels:
         if len(column) > 1:
@@ -47,34 +59,39 @@ def evaluate(prediction_path, country, drawing_area, covid_stats):
     line_thickness = np.quantile(thicknesses, 0.2)
 
     line = []
-    for row in line_pixels:
-        if not len(row):
+    for column in line_pixels:
+        if not len(column):
             line.append(float("nan"))
         else:
-            line.append(np.min(row) + line_thickness / 2)
+            # In case the user is drawing two lines above each other, taking the mean of the y values is not sufficient.
+            # Therefore, take the lowest value of the column and add half of the typical thickness.
+            line.append(np.min(column) + line_thickness / 2)
 
     data = covid_stats.get("date", "new_cases_smoothed", location=country)
 
+    # find the latest readable case statistics
     for i in range(1, 4):
         try:
-            last_date, last_value = date2num(data[-i][0]), float(data[-i][1])
+            last_date, last_value = date2num(datetime.date.fromisoformat(data[-i][0])), float(data[-i][1])
             break
         except ValueError:
             logging.error(f"No data for {country} available (attempt {i}).")
     else:
         raise ValueError(f"There is no readable data for {country}.")
 
-    raw_predictions = dict()
-    raw_predictions[date2num(datetime.date.today())] = last_value
+    # map predicted values with their date and scale them according to the chart
+    predictions = dict()
+    predictions[date2num(datetime.date.today())] = last_value
     last = None
     for i, point in enumerate(line):
         if not np.isnan(point):
             cases = (y1 - y0 - y_offset - point) * y_factor
             if cases < 0: cases = 0
-            last = raw_predictions[date2num(datetime.date.today()) +
+            last = predictions[date2num(datetime.date.today()) +
                                    (x_offset + i) * x_factor] = cases
     if not line or last is None:
         return "No line was found. Please try again."
 
-    raw_predictions[date2num(datetime.date.today() + datetime.timedelta(days=charts.N_PREDICTED_DAYS))] = last
-    return raw_predictions
+    # map the last prediction with the last date in case the line did not fill the whole chart horizontally
+    predictions[date2num(datetime.date.today() + datetime.timedelta(days=charts.N_PREDICTED_DAYS))] = last
+    return predictions
