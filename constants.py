@@ -20,10 +20,6 @@ REAL_TOKEN = ""
 # Telegram chat with the administrator
 ADMIN_USER = 0000000000
 
-# API keys for backups
-DROPBOX_TOKEN = ""
-DROPBOX_PATH = "/database.gz"
-
 ############################
 # Statistics and Charts
 ############################
@@ -31,8 +27,11 @@ DROPBOX_PATH = "/database.gz"
 TEMP_DIR = ".covid_data"
 CSV_SOURCE = "https://covid.ourworldindata.org/data/owid-covid-data.csv"
 IMAGES_PATH = ".covid_images"
+
 N_PREDICTED_DAYS = 150
 N_DAYS_FOR_PERSISTENCY = 130
+N_DAYS_FOR_DAILY = 10
+
 LINE_THRESHOLD = 0.8
 
 ############################

@@ -43,6 +43,7 @@ Due to the use of the library ```multiprocessing``` errors might occur when runn
         - update_notifications: bool
 - high_scores: list
 - high_scores_daily: list
+- high_scores_yesterday: list
 - groups: dict
     - (chat id):int
         - configurations: dict
