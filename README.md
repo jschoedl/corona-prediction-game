@@ -1,6 +1,8 @@
 # Corona Prediction Game
-## Try it out!
-Telegram: [@cpgame_bot](https://t.me/cpgame_bot)
+## ~~Try it out!~~
+~~Telegram: [@cpgame_bot](https://t.me/cpgame_bot)~~
+
+> After the Corona Prediction Game had been online for about 1.5 years and users had made more than 400 predictions, I decided to shut it down in May 2022. It turned out that the code didn't scale well with so many users. Feel free to reuse what you need, but note that I wasn't an overly experienced programmer when I developed this bot.
 
 ## About
 Users of this bot can predict the Covid-19 statistics by drawing a graph into a diagram. Afterwards, the number of cases is compared with the prediction and for every predicted day, up to 1 point can be scored.
